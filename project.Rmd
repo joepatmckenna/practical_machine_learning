@@ -1,0 +1,119 @@
+---
+title: "Practical Machine Learning Course Project"
+author: "Joe McKenna"
+date: "December 8, 2017"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo=TRUE, warning=FALSE, message=FALSE, cache=TRUE)
+setwd('~/Dropbox/data_science/08_practical_machine_learning/project')
+library(caret)
+set.seed(1234)
+```
+
+## Introduction
+
+We train a random forest classifier on a cleaned version of the personal fitness data available from the course website. We expect approximately 99% out-of-sample accuracy based on 4-fold cross-validation. We predict all responses to the prediction quiz portion of the assignment correctly.
+
+## Data Processing
+
+We download the training and testing datasets from the link hosted on the course website.
+
+```{r}
+TRAINING <- read.csv('https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv')
+TESTING <- read.csv('https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv')
+```
+
+We initially store the ``classe`` labels feature of the training set in its own vector, then remove the first 7 columns and the last column of training and testing sets, which are data such as timestamps, ``classe`` and ``problem_id``.
+
+```{r}
+# make copy of downloaded sets
+training <- TRAINING
+testing <- TESTING
+
+# store training labels in a vector
+class <- training$classe
+user_name <- training$user_name
+
+# remove features from training and testing sets
+training <- training[,-c(seq(7), dim(training)[2])]
+testing <- testing[,-c(seq(7), dim(testing)[2])]
+```
+
+Some features of the training and testing sets have dense data, whereas other have very sparse data as seen in the below histograms. We subset the training and testing sets by keeping only the features that have dense data in both training and testing sets.
+
+```{r}
+# plot histograms of the feature data sparsity
+feature_sparsity <- function(X) {
+  apply(X, 2, function(col){mean(is.na(col))})
+}
+training_sparsity = feature_sparsity(training)
+testing_sparsity = feature_sparsity(testing)
+
+par(mfrow=c(1,2))
+hist(training_sparsity, main='Sparsity of training data features', xlab='feature data sparsity')
+hist(testing_sparsity, main='Sparsity of testing data features', xlab='feature data sparsity')
+
+# subset training and testing sets to only include features with dense data
+dense_features = training_sparsity <.5 & testing_sparsity < .5
+dense_features = names(which(dense_features))
+training = training[,dense_features]
+testing = testing[,dense_features]
+```
+
+To visualize the training data, we perform principal compoent analysis, then we plot the first two principal components of each sample colored by the sample label and user name. The samples appear to cluster into groups by user with each label represented within each group.
+
+```{r}
+pca <- prcomp(training, center=TRUE, scale.=TRUE)
+training_pca <- predict(pca, newdata=training)
+
+par(mfrow=c(1,2))
+plot(training_pca[,c(1,2)], col=class, main='Training PCA by label')
+plot(training_pca[,c(1,2)], col=user_name, main='Training PCA by user')
+```
+
+We reattach the labels feature to the training set and convert to a data frame.
+
+```{r}
+# reattach training labels column
+training = data.frame(cbind(training, class))
+```
+
+We train a random forest model with four-fold cross-validation by passing the ``method='cv'`` and ``number=4`` parameters to the ``trainControl`` parameter of the ``caret`` ``train`` function. The model is trained on subsets (75%) of the training data and tested on the remaining subset of the training data (25%) to produce an unbiased measure of accuracy. We print the accuracy obtained by the model fit. We use the ``doMC`` package to perform the training with parallel processors.
+
+```{r}
+# load library for parallel processing and register 6 workers
+library(doMC)
+registerDoMC(cores=32)
+
+# train model: random forest, 4-fold cross-validation, allow parallel processing
+model <- train(class~.,
+                   data=training,
+                   method='rf',
+                   trControl=trainControl(method='cv', number=4, allowParallel=TRUE))
+
+print(model)
+```
+
+We average the accuracies obtained by 4-fold cross-validation to estimate the expected out-of-sample error. It is approximately 99%.
+
+```{r}
+# print average accuracy
+mean(model$results['Accuracy'][,1])
+```
+
+We print the cofusion matrix for the model prediction versus the training data. Since it is diagonal, the model correctly labels all samples of the training data perhaps suggesting the model may be overfit to the training data.
+
+```{r}
+# print confusion matrix
+print(confusionMatrix(predict(model, newdata=training), training$class)$table)
+```
+
+Finally, we predict the unknown labels of the testing data, the first 20 of which are the correct responses to the quiz portion of this assignment.
+
+```{r}
+# print responses for prediction quiz portion
+prediction <- predict(model, newdata=testing)
+head(prediction, 20)
+```
